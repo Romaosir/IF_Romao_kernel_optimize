@@ -1,0 +1,57 @@
+Skills loaded:
+- cuda-kernel-techniques     (B200 catalog + operators/moe/ findings + code-examples)
+- cuda-roofline-strategy     (what-to-try-next from a profile)
+- cuda-kernel-autodev        (experiment-loop discipline)
+- cuda-agent-team            (multi-agent orchestration)
+- bench-environment          (evaluate the speedup between ours and baseline kernel)
+
+Each skill's SKILL.md describes its scope. Pull references on demand based on what you're currently deciding — don't pre-cache the whole catalog.
+
+Goal: optimize the MoE kernel (use cuda, not triton) against the PyTorch baseline at
+  ../mlsys26-contest/definitions/moe/moe_fp8_block_scale_ds_routing_topk8_ng8_kg4_e32_h7168_i2048.json
+Before declaring done, make sure every named ladder item has been genuinely attempted (not quick-rejected because the next item looked easier); avoiding the heavy lifts is the failure mode the manager-failures notes describe.
+
+USE AGENT TEAM
+
+  Planner    — plans one experiment per round. Reads whatever helps —
+               catalog, ladder, dispatch trees, dead-ends, recent profile.
+               Outputs a brief plan: change, hypothesis, what could break,
+               what would falsify. No code edits.
+
+  Implementer — only agent that writes kernel source. Commits before
+                evaluating so reverts are clean.
+
+  Profiler   — runs benchmark and (when useful) NCU. Reports whatever the
+               team actually needs to make the next decision — speedup
+               delta is the floor; bottleneck shifts, dispatched-kernel
+               verification after a backend change, surprising stalls,
+               anything that changes the story. Tell the team what they
+               need to hear, not what a template prescribes.
+
+  Hand-off and merge follow cuda-agent-team. Roles exist for clean
+  attribution, not as a script — adapt when the situation calls for it.
+
+Decision rules (cuda-kernel-autodev):
+  - KEEP / REVERT / investigate after each experiment.
+  - On a REVERT of a named, previously-validated ladder item: first hypothesis is an orthogonal bug. Read the matching code-example and re-check before silently abandoning.
+  - Plateau → category change, not a tighter tweak. The skills name the categories; consult them when stuck.
+
+GPU: cuda:2. Evaluation: bench-environment skill.
+
+Per round:
+  snapshot_code/kernel_R<N>_<speedup>x.cu
+  snapshot_doc/R<N>.md   (change + hypothesis + result + decision +
+                          whatever helps future rounds reconstruct context)
+
+Constraints:
+  - Official libraries (cuBLAS, CUTLASS, FlashInfer) are fair game.
+  - Do NOT reference /home/luomao/program/agent_groups/.
+  - Anti-cheating: a gain that wouldn't survive a shape permutation isn't real. Reject it.
+  - Below the noise floor (~3–4% on B200), re-measure baseline + variant at least twice and average. Don't trust a single run.
+  - v1 must be a custom CUDA kernel (or a thin wrapper around CUTLASS C++ templates). Library wrappers like flashinfer.trtllm_* are NOT allowed as a starting point _ they ARE the FlashInfer baseline, which is the scoring reference. The goal is to exceed it, which requires custom code.
+  - NOT allowed: runtime calls to `flashinfer.*`, `deep_gemm.*`, or any
+    similar pre-built kernel library (fbgemm, xformers, vLLM/SGL kernels,
+    TransformerEngine, etc.). A single line in your kernel that calls into
+    one of these disqualifies the submission, regardless of speedup.
+Don't stop until I stop you.
+

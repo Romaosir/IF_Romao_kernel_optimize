@@ -1,0 +1,107 @@
+{
+  "skill_name": "cuda-kernel-autodev",
+  "notes": "Each eval is a single kernel-optimization run on a copy of one of the three starter kits. The agent is expected to follow the cuda-kernel-autodev workflow: Phase A setup, Phase B experiment loop (at most N experiments), Phase C submission. Success = all workloads CORRECT AND speedup_geomean >= 1.0x vs torch.compile (scenarios 1-8 and 10) or correctness restored + speedup improved (scenario 9). Each eval run is expected to take 20-40 minutes of GPU time depending on the workload set.",
+  "shared_instructions": "You have access to the skills under /home/lihongbin/code_agent/.claude/skills/ — cuda-kernel-autodev (main workflow), cuda-roofline-strategy (what to try next), cuda-kernel-techniques (how each technique works), and ncu-cuda-profiling. The target hardware is NVIDIA B200 (SM100, 148 SMs, 228 KB opt-in shared mem/SM, 8 TB/s HBM3e, 126 MB L2). Edit solution/cuda/kernel.cu (and binding.py if the kernel signature changes, but keep the rmsnorm(x, w, eps, variant, r, b) entry point). Run evaluation with `bash scripts/eval_solution.sh`. The default WORKLOAD_SET is 'baseline'; other values shown per-eval. Commit before every run; follow the KEEP/REVERT rule (>=1% geomean improvement, all CORRECT). Cap at ~12 experiments to keep the run bounded. Write final notes to notes/perf_log.md and a submission summary to notes/submission.md. Report the final geomean speedup vs torch.compile in your last message.",
+  "evals": [
+    {
+      "id": 1,
+      "name": "baseline-bf16-common-shapes",
+      "prompt": "Optimize the RMS norm kernel in this directory to beat torch.compile on common bf16 shapes. Start from the naive kit. WORKLOAD_SET=baseline (3 workloads: bs32_d4096, bs16_d4096, bs8_d8192, all bf16 plain). Target: geomean speedup >= 1.0x over torch.compile. Run at most 12 experiments. Follow cuda-kernel-autodev Phase A -> B -> C.",
+      "starter_kit": "rmsnorm-starter-kit",
+      "workload_set": "baseline",
+      "target": "geomean_speedup_vs_torch_compile >= 1.0",
+      "max_experiments": 12,
+      "expected_output": "Final kernel.cu + notes/perf_log.md with monotonic KEEP history + notes/submission.md with final geomean speedup."
+    },
+    {
+      "id": 2,
+      "name": "small-batch-occupancy",
+      "prompt": "Optimize the RMS norm kernel for SMALL batch shapes where occupancy is the bottleneck. WORKLOAD_SET=small_batch (bs1_d4096, bs1_d2048, bs1_d8192). With very few rows, one-block-per-row wastes the GPU. Consider adaptive dispatch / Split-K over the hidden dim / merging rows across blocks. Target: geomean speedup >= 1.0x over torch.compile. Run at most 12 experiments.",
+      "starter_kit": "rmsnorm-starter-kit",
+      "workload_set": "small_batch",
+      "target": "geomean_speedup_vs_torch_compile >= 1.0",
+      "max_experiments": 12,
+      "expected_output": "Same as #1 — but your perf_log should show reasoning about why small-batch has its own bottleneck profile."
+    },
+    {
+      "id": 3,
+      "name": "large-batch-throughput",
+      "prompt": "Optimize the RMS norm kernel for LARGE batch shapes where many rows stream through. WORKLOAD_SET=large_batch (bs64_d4096, bs32_d8192). Focus on bandwidth utilization, coalescing, vectorization, and possibly persistent kernels. Target: geomean speedup >= 1.0x over torch.compile. Run at most 12 experiments.",
+      "starter_kit": "rmsnorm-starter-kit",
+      "workload_set": "large_batch",
+      "target": "geomean_speedup_vs_torch_compile >= 1.0",
+      "max_experiments": 12,
+      "expected_output": "Kernel should reach high DRAM throughput; perf_log should show roofline analysis after a few experiments."
+    },
+    {
+      "id": 4,
+      "name": "long-reduction",
+      "prompt": "Optimize the RMS norm kernel for LONG hidden-dim shapes (D=12288, 16384). WORKLOAD_SET=long_reduction (long_d12k, long_d16k). The reduction dim is large; consider Split-K across the reduction if one block per row leaves SMs underutilized, or multiple passes with shared-memory staging. Target: geomean speedup >= 1.0x over torch.compile. Run at most 12 experiments.",
+      "starter_kit": "rmsnorm-starter-kit",
+      "workload_set": "long_reduction",
+      "target": "geomean_speedup_vs_torch_compile >= 1.0",
+      "max_experiments": 12,
+      "expected_output": "Consider Split-K / two-kernel pattern; perf_log should discuss the tradeoff."
+    },
+    {
+      "id": 5,
+      "name": "affine-variant",
+      "prompt": "Optimize the RMS norm kernel for the AFFINE variant (Y = X * rsqrt(...) * W + B). WORKLOAD_SET=affine (affine_bs32_d4096, affine_bs16_d8192). The starter runs affine via a separate naive path; fuse the bias add into the epilogue and optimize the whole kernel. Target: geomean speedup >= 1.0x over torch.compile. Run at most 12 experiments.",
+      "starter_kit": "rmsnorm-starter-kit",
+      "workload_set": "affine",
+      "target": "geomean_speedup_vs_torch_compile >= 1.0",
+      "max_experiments": 12,
+      "expected_output": "Fused affine kernel, perf_log, submission notes."
+    },
+    {
+      "id": 6,
+      "name": "residual-fusion",
+      "prompt": "Optimize the RMS norm kernel for the RESIDUAL variant (Y = (X+R) * rsqrt(mean((X+R)^2)) * W). WORKLOAD_SET=residual. The naive starter loads X and R twice (once for sum, once for normalize). Consider caching X+R in registers or shared memory to halve global reads. Target: geomean speedup >= 1.0x over torch.compile. Run at most 12 experiments.",
+      "starter_kit": "rmsnorm-starter-kit",
+      "workload_set": "residual",
+      "target": "geomean_speedup_vs_torch_compile >= 1.0",
+      "max_experiments": 12,
+      "expected_output": "Fused residual kernel avoiding the double load; perf_log should reason about the register vs smem tradeoff."
+    },
+    {
+      "id": 7,
+      "name": "fp16-variant",
+      "prompt": "Optimize the RMS norm kernel for fp16 inputs/outputs. WORKLOAD_SET=fp16 (fp16_bs32_d4096, fp16_bs16_d8192). Same algorithm as bf16 but different dtype path. You may reuse bf16 optimization insights — but measure, don't assume. Target: geomean speedup >= 1.0x over torch.compile. Run at most 12 experiments.",
+      "starter_kit": "rmsnorm-starter-kit",
+      "workload_set": "fp16",
+      "target": "geomean_speedup_vs_torch_compile >= 1.0",
+      "max_experiments": 12,
+      "expected_output": "fp16 kernel at parity or better with bf16 optimizations; perf_log notes any dtype-specific decisions."
+    },
+    {
+      "id": 8,
+      "name": "fp32-precision",
+      "prompt": "Optimize the RMS norm kernel for fp32 inputs/outputs. WORKLOAD_SET=fp32 (fp32_bs16_d4096, fp32_bs8_d8192). Tighter tolerances (1e-5 vs 5e-3 for bf16). fp32 has ~2x the bandwidth pressure of bf16; vectorization and coalescing matter more. Target: geomean speedup >= 1.0x over torch.compile. Run at most 12 experiments.",
+      "starter_kit": "rmsnorm-starter-kit",
+      "workload_set": "fp32",
+      "target": "geomean_speedup_vs_torch_compile >= 1.0",
+      "max_experiments": 12,
+      "expected_output": "fp32 kernel with correctness preserved under tight tolerances; perf_log notes any precision-related decisions."
+    },
+    {
+      "id": 9,
+      "name": "broken-starter-debug-then-optimize",
+      "prompt": "This starter kit's kernel compiles but FAILS correctness on the first eval. Diagnose the bug first, fix it, re-establish correctness, then proceed to optimization. WORKLOAD_SET=baseline. Target: restore correctness AND achieve geomean speedup >= 1.0x over torch.compile. Run at most 12 experiments total (including the fix).",
+      "starter_kit": "rmsnorm-starter-kit-broken",
+      "workload_set": "baseline",
+      "target": "all_correct_true AND geomean_speedup_vs_torch_compile >= 1.0",
+      "max_experiments": 12,
+      "expected_output": "Fix commit clearly separated from optimization commits; perf_log names the bug in the 'Change' field of the fix commit."
+    },
+    {
+      "id": 10,
+      "name": "plateau-breakthrough-from-good-start",
+      "prompt": "This starter kit is already decent (vec4 loads + warp-shuffle reduction) and may already beat torch.compile on some shapes. Your task: push beyond this near-ceiling baseline. WORKLOAD_SET=baseline. Target: achieve geomean speedup >= 1.10x over torch.compile (stricter bar, assuming the starter is already around 1.0x). Run at most 12 experiments. Expect to use cuda-roofline-strategy's plateau row — the first few obvious wins are already in.",
+      "starter_kit": "rmsnorm-starter-kit-good",
+      "workload_set": "baseline",
+      "target": "geomean_speedup_vs_torch_compile >= 1.10",
+      "max_experiments": 12,
+      "expected_output": "Agent should explicitly note starting from a near-ceiling baseline. Expect techniques like register caching of the row (avoid double-load), multi-row-per-block, or algorithmic fusion. perf_log should show plateau reasoning."
+    }
+  ]
+}
